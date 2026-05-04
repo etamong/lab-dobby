@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lab-dobby"
+version = "0.1.0"
+description = "Slack notifications for lab folks running long jobs (Colab + SSH server friendly)"
+requires-python = ">=3.8"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/etamong/lab-dobby"
+
+[tool.setuptools]
+py-modules = ["labdobby"]
