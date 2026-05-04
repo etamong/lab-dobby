@@ -198,13 +198,108 @@ main()
 
 ## 메시지 형식
 
-알림에는 자동으로 hostname prefix가 붙어 어디서 온 건지 한눈에 보임:
+두 가지 형태로 나옴:
+
+### Plain text — `lab.notify(...)` 가 보내는 단발 메시지
+
+자동으로 `[hostname]` (필요시 `[tag]`) prefix가 붙음:
 ```
-[colab] ✅ train done in 12m34s
-[t4-server] [lr_sweep_v2] epoch 10 done
-[t4-server] ❌ train failed in 3m1s
-RuntimeError: CUDA out of memory
+[t4-server] epoch 10/50 done, loss=0.234
+[t4-server][lr_sweep_v2] checkpoint 저장됨
 ```
+
+### 카드 — `@on_finish` / `with block` / `watch()` 의 상태 알림
+
+좌측 컬러 바, 헤더, 필드 그리드, 푸터로 구성. argo / grafana 알림 같은 느낌.
+
+![lab-dobby card examples in Slack](docs/cards.png)
+
+**성공 (초록색 바):**
+```
+┃ ✅ train done
+┃ ─────────────
+┃ Host          Duration
+┃ t4-server     12m34s
+┃ ─────────────
+┃ lab-dobby · 2026-05-04 14:23
+└─ 초록
+```
+
+**실패 (빨강 바, 트레이스백 마지막 줄 코드 블록 포함):**
+```
+┃ ❌ train failed
+┃ ─────────────
+┃ Host          Duration         Tag
+┃ t4-server     3m1s             lr_sweep_v2
+┃ ─────────────
+┃ ```
+┃ RuntimeError: CUDA out of memory. Tried to allocate 2.00 GiB
+┃ ```
+┃ ─────────────
+┃ lab-dobby · 2026-05-04 14:26
+└─ 빨강
+```
+
+> 모바일 푸시 미리보기는 `✅ train done in 12m34s` 같은 한 줄 fallback이 보여 알림창에서도 핵심 정보 한눈에.
+
+---
+
+## 실전 예시
+
+대표적인 학습 스크립트에 끼워넣는 모양:
+
+```python
+# train.py
+import labdobby as lab
+
+lab.watch()  # 스크립트 전체 안전망 (에러로 죽어도 알림 옴)
+
+import torch
+from mymodel import Model
+from mydata import load_dataset
+
+with lab.block("데이터 로딩"):
+    train_ds, val_ds = load_dataset("...")
+
+@lab.on_finish(tag="lr=1e-3")
+def train():
+    model = Model().cuda()
+    optim = torch.optim.Adam(model.parameters(), lr=1e-3)
+    for epoch in range(50):
+        for x, y in train_ds:
+            ...
+        if (epoch + 1) % 10 == 0:
+            lab.notify(f"epoch {epoch+1}/50 loss={loss:.3f}", tag="lr=1e-3")
+    return model
+
+model = train()
+
+with lab.block("평가", tag="lr=1e-3"):
+    metrics = evaluate(model, val_ds)
+    lab.notify(f"val acc={metrics['acc']:.3f}", tag="lr=1e-3")
+```
+
+이 스크립트가 보내는 알림 (정상 종료 시):
+1. `[hostname] epoch 10/50 loss=0.342` (plain) — 학습 중 5번
+2. `✅ train done in 1h23m` (카드) — 학습 끝
+3. `[hostname][lr=1e-3] val acc=0.912` (plain) — 평가 결과
+4. `✅ 평가 done in 4m12s` (카드) — 평가 블록 끝
+5. `✅ train.py done in 1h28m` (카드) — 스크립트 전체 끝 (`watch()`)
+
+OOM으로 죽으면 1~2번까지 오다가:
+- `❌ train failed in 32m4s` (카드 + 트레이스백)
+- `❌ train.py failed in 32m5s` (카드 + 트레이스백) — `watch()`가 따로
+
+---
+
+## 테스트
+
+저장소 루트에서:
+```bash
+python -m unittest discover -v tests
+```
+
+의존성 0개로 stdlib `unittest`만 사용. webhook 실제로 안 쏨 (mock).
 
 ---
 
